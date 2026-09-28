@@ -1,0 +1,173 @@
+# ============================================================
+# SIEM SSH Monitoring Lab — SPL Queries
+# File: sql_queries.spl
+# Platform: Splunk Enterprise 10.4.3
+# Index: main  |  Source: *auth.log*
+# ============================================================
+# Paste individual queries into Splunk Search & Reporting.
+# Comment lines start with # — remove them before running if needed.
+# ============================================================
+
+
+# ------------------------------------------------------------
+# 1. BASELINE & DISCOVERY
+# ------------------------------------------------------------
+
+index=main source="*auth.log*" | stats count by source, sourcetype, host
+
+index=main source="*auth.log*" | head 20
+
+index=main source="*auth.log*" | timechart span=1h count
+
+index=main | stats count by index, source, sourcetype | sort - count
+
+
+# ------------------------------------------------------------
+# 2. AUTHENTICATION CLASSIFICATION
+# ------------------------------------------------------------
+
+index=main source="*auth.log*" | eval event_type=case(match(_raw, "Failed password"), "Failed password", match(_raw, "Accepted password"), "Accepted password", match(_raw, "Invalid user"), "Invalid user", match(_raw, "Connection closed by authenticating user"), "Connection closed", match(_raw, "session opened"), "Session opened", match(_raw, "session closed"), "Session closed", true(), "Other") | stats count by event_type | sort - count
+
+index=main source="*auth.log*" | eval outcome=case(match(_raw,"Failed password"),"Failed", match(_raw,"Accepted password"),"Accepted", match(_raw,"Invalid user"),"Invalid user", true(),"Other") | stats count by outcome
+
+
+# ------------------------------------------------------------
+# 3. FAILED LOGIN DETECTION
+# ------------------------------------------------------------
+
+index=main source="*auth.log*" "Failed password"
+
+index=main source="*auth.log*" "Failed password" | rex "from (?<src_ip>\d+\.\d+\.\d+\.\d+)" | stats count by src_ip | sort - count
+
+index=main source="*auth.log*" "Failed password" | timechart span=10m count
+
+index=main source="*auth.log*" "Failed password" | rex "from (?<src_ip>\d+\.\d+\.\d+\.\d+)" | timechart span=10m count by src_ip
+
+
+# ------------------------------------------------------------
+# 4. BRUTE-FORCE DETECTION
+# ------------------------------------------------------------
+
+index=main source="*auth.log*" "Failed password" | rex "from (?<src_ip>\d+\.\d+\.\d+\.\d+)" | stats count as attempts by src_ip | sort - attempts | head 20
+
+index=main source="*auth.log*" "Failed password" | rex "from (?<src_ip>\d+\.\d+\.\d+\.\d+)" | stats count as attempts by src_ip | where attempts > 5 | sort - attempts
+
+index=main source="*auth.log*" "Failed password" | timechart span=1m count | where count > 10
+
+index=main source="*auth.log*" "Failed password" | rex "for (invalid user )?(?<user>\S+) from (?<src_ip>\d+\.\d+\.\d+\.\d+)" | stats count by src_ip, user | where count > 3 | sort - count
+
+
+# ------------------------------------------------------------
+# 5. COMPROMISE CORRELATION
+# ------------------------------------------------------------
+
+index=main source="*auth.log*" ("Failed password" OR "Accepted password") | rex "from (?<src_ip>\d+\.\d+\.\d+\.\d+)" | eval status=if(match(_raw,"Failed password"),"Failed","Success") | stats count(eval(status="Failed")) as failures, count(eval(status="Success")) as successes by src_ip | where failures > 3 AND successes > 0 | sort - failures
+
+index=main source="*auth.log*" ("Failed password" OR "Accepted password") | rex "from (?<src_ip>\d+\.\d+\.\d+\.\d+)" | eval status=if(match(_raw,"Failed password"),"Failed","Success") | stats min(_time) as first_seen, max(_time) as last_seen, count(eval(status="Failed")) as failures, count(eval(status="Success")) as successes by src_ip | where failures > 3 AND successes > 0 | convert ctime(first_seen) ctime(last_seen)
+
+index=main source="*auth.log*" ("Failed password" OR "Accepted password") | rex "from (?<src_ip>\d+\.\d+\.\d+\.\d+)" | eval status=if(match(_raw,"Failed password"),"Failed","Success") | stats count(eval(status="Failed")) as f, count(eval(status="Success")) as s by src_ip | where f > 0 AND s = 0 | sort - f
+
+
+# ------------------------------------------------------------
+# 6. USER & TARGET ANALYSIS
+# ------------------------------------------------------------
+
+index=main source="*auth.log*" "Failed password" | rex "for (invalid user )?(?<user>\S+) from" | stats count as attempts by user | sort - attempts | head 20
+
+index=main source="*auth.log*" "Invalid user" | rex "Invalid user (?<user>\S+) from (?<src_ip>\d+\.\d+\.\d+\.\d+)" | stats count by user, src_ip | sort - count | head 20
+
+index=main source="*auth.log*" "Accepted password" | rex "for (?<user>\S+) from (?<src_ip>\d+\.\d+\.\d+\.\d+)" | stats count by user, src_ip | sort - count
+
+index=main source="*auth.log*" ("Accepted password for root" OR "Accepted publickey for root" OR "Failed password for root") | rex "from (?<src_ip>\d+\.\d+\.\d+\.\d+)" | eval result=if(match(_raw,"Accepted"),"SUCCESS","FAILED") | table _time, host, src_ip, result, _raw | sort - _time
+
+
+# ------------------------------------------------------------
+# 7. PRIVILEGE & PERSISTENCE
+# ------------------------------------------------------------
+
+index=main source="*auth.log*" "COMMAND=" | rex "sudo:\s+(?<user>\S+)\s+:.*COMMAND=(?<command>.+)" | stats count by user, command | sort - count
+
+index=main source="*auth.log*" ("useradd" OR "new user" OR "new group" OR "groupadd") | table _time, host, _raw | sort - _time
+
+index=main source="*auth.log*" "session opened" | rex "for user (?<user>\S+)" | stats count by user | sort - count
+
+
+# ------------------------------------------------------------
+# 8. TIME-BASED ANALYSIS
+# ------------------------------------------------------------
+
+index=main source="*auth.log*" "Accepted password" | eval hour=strftime(_time, "%H") | stats count by hour | sort hour
+
+index=main source="*auth.log*" "Failed password" | eval hour=strftime(_time, "%H") | stats count by hour | sort hour
+
+index=main source="*auth.log*" "Accepted password" | eval day=strftime(_time, "%A") | stats count by day | sort - count
+
+
+# ------------------------------------------------------------
+# 9. SEVERITY & PRIORITIZATION
+# ------------------------------------------------------------
+
+index=main source="*auth.log*" "Failed password" | rex "from (?<src_ip>\d+\.\d+\.\d+\.\d+)" | stats count as attempts by src_ip | eval severity=case(attempts > 50, "CRITICAL", attempts > 20, "HIGH", attempts > 5, "MEDIUM", true(), "LOW") | where attempts > 5 | sort - attempts
+
+index=main source="*auth.log*" "Failed password" | rex "from (?<src_ip>\d+\.\d+\.\d+\.\d+)" | stats count as attempts, dc(user) as users_targeted by src_ip | sort - attempts | head 20
+
+
+# ------------------------------------------------------------
+# 10. DASHBOARD PANEL QUERIES
+# ------------------------------------------------------------
+
+index=main source="*auth.log*" | stats count
+
+index=main source="*auth.log*" "Failed password" | stats count
+
+index=main source="*auth.log*" "Accepted password" | stats count
+
+index=main source="*auth.log*" "Failed password" | rex "from (?<src_ip>\d+\.\d+\.\d+\.\d+)" | stats dc(src_ip)
+
+index=main source="*auth.log*" ("Failed password" OR "Accepted password") | rex "from (?<src_ip>\d+\.\d+\.\d+\.\d+)" | eval status=if(match(_raw,"Failed password"),"Failed","Success") | stats count(eval(status="Failed")) as f, count(eval(status="Success")) as s by src_ip | where f>3 AND s>0 | stats count
+
+index=main source="*auth.log*" ("Failed password" OR "Accepted password") | eval status=if(match(_raw,"Failed password"),"Failed","Success") | timechart span=10m count by status
+
+index=main source="*auth.log*" ("Failed password" OR "Accepted password" OR "Invalid user" OR "session opened") | rex "from (?<src_ip>\d+\.\d+\.\d+\.\d+)" | eval event_type=case(match(_raw,"Failed password"),"FAILED", match(_raw,"Accepted password"),"SUCCESS", match(_raw,"Invalid user"),"INVALID", match(_raw,"session opened"),"SESSION", true(),"OTHER") | table _time, host, src_ip, event_type, _raw | sort - _time
+
+
+# ------------------------------------------------------------
+# 11. ALERT SEARCHES
+# ------------------------------------------------------------
+
+index=main source="*auth.log*" "Failed password" | rex "from (?<src_ip>\d+\.\d+\.\d+\.\d+)" | stats count as attempts by src_ip | where attempts > 5 | sort - attempts
+
+index=main source="*auth.log*" ("Failed password" OR "Accepted password") | rex "from (?<src_ip>\d+\.\d+\.\d+\.\d+)" | eval status=if(match(_raw,"Failed password"),"Failed","Success") | stats count(eval(status="Failed")) as failures, count(eval(status="Success")) as successes by src_ip | where failures > 3 AND successes > 0
+
+index=main source="*auth.log*" ("useradd" OR "new user" OR "groupadd" OR "new group") | table _time, host, _raw
+
+index=main source="*auth.log*" "Accepted password for root"
+
+
+# ------------------------------------------------------------
+# 12. ENRICHMENT (OPTIONAL)
+# ------------------------------------------------------------
+
+index=main source="*auth.log*" "Failed password" | rex "from (?<src_ip>\d+\.\d+\.\d+\.\d+)" | iplocation src_ip | stats count by src_ip, Country, City | sort - count
+
+index=main source="*auth.log*" "Failed password" | rex "from (?<src_ip>\d+\.\d+\.\d+\.\d+)" | iplocation src_ip | geostats count by Country
+
+
+# ------------------------------------------------------------
+# 13. TROUBLESHOOTING
+# ------------------------------------------------------------
+
+index=main source="*auth.log*" | stats count, min(_time) as earliest, max(_time) as latest | convert ctime(earliest) ctime(latest)
+
+index=main source="*auth.log*" | stats count by source, host, _raw | where count > 1
+
+index=_internal source=*splunkd.log* "ERROR" OR "WARN" | stats count by component, message | sort - count
+
+| REST /services/data/inputs/monitor | table title, disabled, index, sourcetype
+
+index=main source="*auth.log*" "Failed password" | rex "from (?<src_ip>\d+\.\d+\.\d+\.\d+)" | stats count by src_ip | head 5
+
+
+# ============================================================
+# END OF FILE
+# ============================================================

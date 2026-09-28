@@ -1,0 +1,236 @@
+<dashboard version="1.1" theme="dark">
+  <label>SSH Security Operations Center</label>
+  <description>Professional Incident Responder view for SSH authentication activity</description>
+
+  <row>
+    <panel>
+      <title>Total Events</title>
+      <single>
+        <search>
+          <query>index=main source="*auth.log*" | stats count</query>
+          <earliest>-24h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="colorBy">value</option>
+        <option name="rangeColors">["0x53a051","0x0877a6","0xf8be34","0xf1813f","0xdc4e41"]</option>
+        <option name="underLabel">events (24h)</option>
+      </single>
+    </panel>
+    <panel>
+      <title>Failed Logins</title>
+      <single>
+        <search>
+          <query>index=main source="*auth.log*" "Failed password" | stats count</query>
+          <earliest>-24h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="rangeColors">["0x53a051","0xf8be34","0xf1813f","0xdc4e41"]</option>
+        <option name="underLabel">failures (24h)</option>
+      </single>
+    </panel>
+    <panel>
+      <title>Successful Logins</title>
+      <single>
+        <search>
+          <query>index=main source="*auth.log*" "Accepted password" | stats count</query>
+          <earliest>-24h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="underLabel">successes (24h)</option>
+      </single>
+    </panel>
+    <panel>
+      <title>Unique Attacking IPs</title>
+      <single>
+        <search>
+          <query>index=main source="*auth.log*" "Failed password" | rex "from (?&lt;src_ip&gt;\d+\.\d+\.\d+\.\d+)" | stats dc(src_ip)</query>
+          <earliest>-24h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="rangeColors">["0x53a051","0xf8be34","0xf1813f","0xdc4e41"]</option>
+        <option name="underLabel">unique sources (24h)</option>
+      </single>
+    </panel>
+    <panel>
+      <title>Compromise Indicator</title>
+      <single>
+        <search>
+          <query>index=main source="*auth.log*" ("Failed password" OR "Accepted password") | rex "from (?&lt;src_ip&gt;\d+\.\d+\.\d+\.\d+)" | eval status=if(match(_raw,"Failed password"),"Failed","Success") | stats count(eval(status="Failed")) as f, count(eval(status="Success")) as s by src_ip | where f&gt;3 AND s&gt;0 | stats count</query>
+          <earliest>-24h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="rangeColors">["0x53a051","0xf8be34","0xf1813f","0xdc4e41"]</option>
+        <option name="underLabel">IPs with fail→success (24h)</option>
+      </single>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Failed Logins Over Time</title>
+      <chart>
+        <search>
+          <query>index=main source="*auth.log*" "Failed password" | timechart span=10m count</query>
+          <earliest>-24h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="charting.chart">area</option>
+        <option name="charting.chart.stackMode">default</option>
+        <option name="charting.legend.placement">none</option>
+      </chart>
+    </panel>
+    <panel>
+      <title>Authentication Events Over Time (Failed vs Success)</title>
+      <chart>
+        <search>
+          <query>index=main source="*auth.log*" ("Failed password" OR "Accepted password") | eval status=if(match(_raw,"Failed password"),"Failed","Success") | timechart span=10m count by status</query>
+          <earliest>-24h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="charting.chart">line</option>
+      </chart>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Top Attacking IP Addresses</title>
+      <table>
+        <search>
+          <query>index=main source="*auth.log*" "Failed password" | rex "from (?&lt;src_ip&gt;\d+\.\d+\.\d+\.\d+)" | stats count as attempts, dc(user) as users_targeted by src_ip | sort - attempts | head 20</query>
+          <earliest>-24h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">cell</option>
+      </table>
+    </panel>
+    <panel>
+      <title>Top Targeted Usernames</title>
+      <table>
+        <search>
+          <query>index=main source="*auth.log*" "Failed password" | rex "for (invalid user )?(?&lt;user&gt;\S+) from" | stats count as attempts, dc(src_ip) as sources by user | sort - attempts | head 20</query>
+          <earliest>-24h</earliest>
+          <latest>now</latest>
+        </search>
+      </table>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>⚠️ Potential Compromises — Failed then Successful Login</title>
+      <table>
+        <search>
+          <query>index=main source="*auth.log*" ("Failed password" OR "Accepted password") | rex "from (?&lt;src_ip&gt;\d+\.\d+\.\d+\.\d+)" | eval status=if(match(_raw,"Failed password"),"Failed","Success") | stats min(_time) as first_seen, max(_time) as last_seen, count(eval(status="Failed")) as failures, count(eval(status="Success")) as successes by src_ip | where failures&gt;3 AND successes&gt;0 | eval severity=case(failures&gt;50,"CRITICAL", failures&gt;20,"HIGH", failures&gt;5,"MEDIUM", true(),"LOW") | convert ctime(first_seen) ctime(last_seen) | sort - failures</query>
+          <earliest>-24h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">row</option>
+        <option name="rowNumbers">true</option>
+      </table>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Root Account Activity</title>
+      <table>
+        <search>
+          <query>index=main source="*auth.log*" ("Accepted password for root" OR "Accepted publickey for root" OR "Failed password for root") | rex "from (?&lt;src_ip&gt;\d+\.\d+\.\d+\.\d+)" | eval result=if(match(_raw,"Accepted"),"SUCCESS","FAILED") | table _time, host, src_ip, result, _raw | sort - _time</query>
+          <earliest>-24h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">row</option>
+      </table>
+    </panel>
+    <panel>
+      <title>Invalid User Attempts</title>
+      <table>
+        <search>
+          <query>index=main source="*auth.log*" "Invalid user" | rex "Invalid user (?&lt;user&gt;\S+) from (?&lt;src_ip&gt;\d+\.\d+\.\d+\.\d+)" | stats count by user, src_ip | sort - count | head 20</query>
+          <earliest>-24h</earliest>
+          <latest>now</latest>
+        </search>
+      </table>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Sudo / Privilege Escalation Activity</title>
+      <table>
+        <search>
+          <query>index=main source="*auth.log*" "COMMAND=" | rex "sudo:\s+(?&lt;user&gt;\S+)\s+:.*COMMAND=(?&lt;command&gt;.+)" | stats count by user, command | sort - count</query>
+          <earliest>-24h</earliest>
+          <latest>now</latest>
+        </search>
+      </table>
+    </panel>
+    <panel>
+      <title>New Users / Groups Created</title>
+      <table>
+        <search>
+          <query>index=main source="*auth.log*" ("useradd" OR "new user" OR "new group" OR "groupadd") | table _time, host, _raw | sort - _time</query>
+          <earliest>-7d</earliest>
+          <latest>now</latest>
+        </search>
+      </table>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Attack Timeline — Detailed Event Log</title>
+      <table>
+        <search>
+          <query>index=main source="*auth.log*" ("Failed password" OR "Accepted password" OR "Invalid user" OR "session opened") | rex "from (?&lt;src_ip&gt;\d+\.\d+\.\d+\.\d+)" | eval event_type=case(match(_raw,"Failed password"),"FAILED", match(_raw,"Accepted password"),"SUCCESS", match(_raw,"Invalid user"),"INVALID", match(_raw,"session opened"),"SESSION", true(),"OTHER") | table _time, host, src_ip, event_type, _raw | sort - _time</query>
+          <earliest>-1h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">row</option>
+        <option name="count">50</option>
+      </table>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Login Activity by Hour of Day</title>
+      <chart>
+        <search>
+          <query>index=main source="*auth.log*" "Accepted password" | eval hour=strftime(_time,"%H") | stats count by hour | sort hour</query>
+          <earliest>-7d</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="charting.chart">column</option>
+        <option name="charting.legend.placement">none</option>
+      </chart>
+    </panel>
+    <panel>
+      <title>Authentication Outcome Breakdown</title>
+      <chart>
+        <search>
+          <query>index=main source="*auth.log*" | eval outcome=case(match(_raw,"Failed password"),"Failed", match(_raw,"Accepted password"),"Accepted", match(_raw,"Invalid user"),"Invalid user", true(),"Other") | stats count by outcome</query>
+          <earliest>-24h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="charting.chart">pie</option>
+      </chart>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Brute Force by Severity</title>
+      <table>
+        <search>
+          <query>index=main source="*auth.log*" "Failed password" | rex "from (?&lt;src_ip&gt;\d+\.\d+\.\d+\.\d+)" | stats count as attempts by src_ip | eval severity=case(attempts&gt;50,"CRITICAL", attempts&gt;20,"HIGH", attempts&gt;5,"MEDIUM", true(),"LOW") | where attempts&gt;5 | sort - attempts</query>
+          <earliest>-24h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">row</option>
+      </table>
+    </panel>
+  </row>
+
+</dashboard>
