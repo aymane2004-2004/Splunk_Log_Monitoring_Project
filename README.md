@@ -19,11 +19,12 @@ It monitors `/var/log/auth.log` on an Ubuntu VM with Splunk Enterprise, detects 
 ---
 
 ## Architecture
+```
 Ubuntu VM (VirtualBox)
 ├── OpenSSH Server → produces /var/log/auth.log
 └── Splunk Enterprise → ingests → indexes → detects → alerts
 └── Web UI :8000 → dashboards & search
-
+```
 text
 
 ---
@@ -123,8 +124,6 @@ for i in {1..20}; do ssh fakeuser@localhost; done
 Full instructions: lab_setup.md
 
 Repository Structure
-text
-.
 ├── README.md                          # Overview
 ├── lab_setup.md                       # Step-by-step build guide
 ├── dashboard/
@@ -133,8 +132,8 @@ text
 │   └── detections.spl                 # All SPL detection queries
 └── Screenshots                        # photos taken during the investigation
 Requirements
-Component	Spec
-Hypervisor	VirtualBox 6.1+ / 7.x
-Guest OS	Ubuntu 20.04 or 22.04 LTS
-VM Resources	4 GB RAM · 2 vCPU · 40 GB disk
-Splunk	Enterprise 10.x (Free license — 500 MB/day)
+Component	: Spec
+Hypervisor	: VirtualBox 6.1+ / 7.x
+Guest OS	: Ubuntu 20.04 or 22.04 LTS
+VM Resources    : 4 GB RAM · 2 vCPU · 40 GB disk
+Splunk	        : Enterprise 10.x (Free license — 500 MB/day)
