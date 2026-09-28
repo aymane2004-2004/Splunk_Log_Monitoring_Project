@@ -131,9 +131,12 @@ Repository Structure
 ├── queries/
 │   └── detections.spl                 # All SPL detection queries
 └── Screenshots                        # photos taken during the investigation
-Requirements
+```
+## Requirements
+```
 Component	: Spec
 Hypervisor	: VirtualBox 6.1+ / 7.x
 Guest OS	: Ubuntu 20.04 or 22.04 LTS
 VM Resources    : 4 GB RAM · 2 vCPU · 40 GB disk
 Splunk	        : Enterprise 10.x (Free license — 500 MB/day)
+```
